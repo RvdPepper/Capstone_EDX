@@ -1,0 +1,348 @@
+---
+title: "New York Sales document"
+author: "Robert van der Heijden"
+date: "3/1/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+# Content
+
+1. Summary section: describes the dataset and summarizes the goal of the project and key steps that were performed
+2. Analysis section: explains the process and techniques used, including data cleaning, data exploration and visualization, insights gained, and your modeling approach
+3. Results section: presents the modeling results and discusses the model performance
+4. Conclusion section: gives a brief summary of the report, its limitations and future work
+
+
+
+# 1) Summary section
+For this project, we will be creating a sales prediction system using the New York City Sales dataset. This dataset is a record of every building or building unit (apartment, etc.) sold in the New York City property market over a 12-month period. (source: https://www.kaggle.com/new-york-city/nyc-property-sales)
+
+The goal of this project is to train a machine learning algorithm using the inputs in the New York City Sales dataset. The predictions from this machine learning algorithm will be compared to the true sales price in the validation set using RMSE. 
+
+
+
+# 2) Analysis Section
+The first step is to create an New York City Sales (NYC_Sales) set and validation set.
+
+    --> Create NYC_Train set, NYC_validation set
+
+```{r NYC, echo = FALSE}
+
+# Note: this process could take a couple of minutes
+  if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+  if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+  if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+  if(!require(readr)) install.packages("readr", repos = "http://cran.us.r-project.org")
+  if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+  if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-project.org")
+
+##DOWNLOAD
+  dl <- tempfile()
+  download.file("https://github.com/RvdPepper/Capstone_EDX/raw/master/nyc-rolling-sales.csv", dl)
+  dat <- read_csv(dl)
+
+##LOKAAL!!
+  #filename <- "nyc-rolling-sales.csv"
+  #fullpath <- file.path("C:/Users/Robert vd Heijden/Documents/Studio R documenten/Capstone", filename)
+  #dat <- read_csv(fullpath)
+
+##Buil DataSet
+  dat <- dat %>% select("BOROUGH","BUILDING CLASS CATEGORY", "ZIP CODE", "RESIDENTIAL UNITS", "COMMERCIAL UNITS", "YEAR BUILT", "TAX CLASS AT TIME OF SALE", "BUILDING CLASS AT TIME OF SALE", "SALE DATE", "SALE PRICE")
+  
+  NYC_Sales <- as.data.frame(dat) %>% rename(BUILDING = "BUILDING CLASS CATEGORY",
+                                                             ZIPCODE = "ZIP CODE",
+                                                             RESIDENTIAL = "RESIDENTIAL UNITS",
+                                                             COMMERCIAL = "COMMERCIAL UNITS",
+                                                             YEARBUILT = "YEAR BUILT",
+                                                             TAXCLASSSALE = "TAX CLASS AT TIME OF SALE",
+                                                             BUILDINGCLASSSALE = "BUILDING CLASS AT TIME OF SALE",
+                                                             SALEDATE = "SALE DATE",
+                                                             SALEPRICE = "SALE PRICE") 
+
+##Only records with a Salesprice and zipcode imported
+  NYC_Sales <- filter(NYC_Sales,SALEPRICE > 1000)
+  NYC_Sales <- filter(NYC_Sales,ZIPCODE != 0)
+
+##Convert records to numeric or character
+  NYC_Sales <- as.data.frame(NYC_Sales) %>% mutate(BOROUGH = as.numeric(BOROUGH),
+                                              BUILDING = as.character(BUILDING),
+                                              ZIPCODE = as.numeric(ZIPCODE),
+                                              RESIDENTIAL = as.numeric(RESIDENTIAL),
+                                              COMMERCIAL = as.numeric(COMMERCIAL),
+                                              YEARBUILT = as.numeric(YEARBUILT),
+                                              TAXCLASSSALE = as.numeric(TAXCLASSSALE),
+                                              BUILDINGCLASSSALE = as.character(BUILDINGCLASSSALE),
+                                              SALEDATE = SALEDATE,
+                                              SALE = SALEDATE,
+                                              SALEPRICE = as.numeric(SALEPRICE))
+
+## Validation set will be 10% of New York City Sales dataset
+  set.seed(1, sample.kind="Rounding")
+  test_index <- createDataPartition(y = NYC_Sales$SALEPRICE, times = 1, p = 0.1, list = FALSE)
+  NYC_Train <- NYC_Sales[-test_index,]
+  NYC_Validation <- NYC_Sales[test_index,]
+
+```
+
+## Data Exploration
+
+### What is in the New York Sales data set?
+
+1. The first ten lines of the dataset:
+
+```{r head, echo=FALSE}
+library(knitr)
+kable(NYC_Train[1:10,1:5], caption= "First columns", align = "clcrr", col.names = c("Borough","Building","ZipCode","Resid.", "Commer."), "markdown")
+kable(NYC_Train[1:10,6:10], caption= "Final columns", align = "crrcr", col.names = c("Year","TaxClass","Class","Sale Date", "Sale Price"), "markdown")
+```
+
+2. The summary of the statistics of the dataset:
+
+```{r summary, echo=FALSE}
+
+    summary_1 <- summary(NYC_Train, digits = 2)
+    summary_2 <- summary(NYC_Train, digits = 5)
+knitr::kable(summary_1[,1:6], align = "llllll", col.names = c("Borough","Building","ZipCode","Resid.", "Commer.","Year"), "markdown", position="l")
+knitr::kable(summary_2[,7:10], align = "llll", col.names = c("TaxClass","Class","Sale Date", "Sale Price"), "markdown", position="l")
+
+```
+
+```{r zipcode, echo=FALSE}
+library(tidyverse)
+Zipcode <- NYC_Train %>% select(ZIPCODE) %>% distinct()
+
+```
+
+|  |  |
+| --- | --- |
+| 3. The number of rows is: | `r nrow(NYC_Train)` |
+| 4. The number of columns is: | `r ncol(NYC_Train)-1` |
+| 5. How many different zipcodes are in the NYC dataset?|`r nrow(Zipcode)`|
+| 6. The average saleprice is: |`r format(mean(NYC_Train$SALEPRICE), scientific = FALSE)`|
+
+## Data Cleaning
+  
+  - Convert the saledate into Year-Month Format (needed for Data Visualisation)
+  
+        --> Year-Month added to train set and validation set
+```{r Modify_year-month, echo=FALSE}
+NYC_Train <- NYC_Train %>% separate(SALE, c("YEAR", "MONTH", "DAY"), "-") %>% mutate(YEAR =as.numeric(YEAR), MONTH = as.numeric(MONTH), DAY = as.numeric(DAY)) %>% unite("YEARMONTH", YEAR:MONTH, sep="-") %>% select(-DAY)
+
+NYC_Validation <- NYC_Validation %>% separate(SALE, c("YEAR", "MONTH", "DAY"), "-") %>% mutate(YEAR =as.numeric(YEAR), MONTH = as.numeric(MONTH), DAY = as.numeric(DAY)) %>% unite("YEARMONTH", YEAR:MONTH, sep="-") %>% select(-DAY)
+```
+
+## Data Exploration (After Data Cleaning)
+  
+### How are the sales prices distributed (histogram)? 
+      
+```{r histogram_sales_prices, echo=FALSE, fig.align="center", fig.height=3, fig.width=3}
+hist_SALEPRICE<- NYC_Train %>% filter(SALEPRICE < 10000000) %>% ggplot(aes(x=SALEPRICE/1000000)) + geom_histogram(binwidth = 0.5, fill = "Blue", col = "Black") + theme(axis.text=element_text(size=8), axis.title=element_text(size=8), plot.title=element_text(size=12)) + xlab("Sales Price NYC (*10^6)") + ggtitle("Histogram Sales Price")
+hist_SALEPRICE
+```
+
+### How are the sales prices  distributed over the years (boxplot)? 
+
+```{r scatterplot_year, echo=FALSE, fig.align="center", fig.height=3, fig.width=3}
+scat_YEARSALE <- NYC_Train %>% mutate(date = round_date(SALEDATE, unit = "week")) %>% group_by(date) %>% summarize(price_in_billion = mean(SALEPRICE)/1000000) %>% ggplot(aes(date, price_in_billion)) + ggtitle("Scatterplot Sale Date") + theme(axis.text=element_text(size=8), axis.title=element_text(size=8), plot.title=element_text(size=12)) + xlab("Sale Date") + ylab("Sales Price NYC (*10^6)") + geom_point() + geom_smooth()
+scat_YEARSALE
+```
+
+### How are the sales prices  distributed over the other predictors?
+
+```{r Distributions, echo=FALSE, fig.align="center", fig.height=8, fig.width=8}
+hist_BOROUGH <- NYC_Train %>% filter(SALEPRICE < 10000000) %>% ggplot(aes(x=SALEPRICE/1000000)) +  geom_histogram(binwidth = 0.5, fill = "Blue", col = "Black") + theme(axis.text=element_text(size=6), axis.title=element_text(size=6), plot.title=element_text(size=10)) + xlab("Sales Price NYC (*10^6)") + ggtitle("Histogram Borough") + facet_wrap(~BOROUGH, nrow=1)
+hist_TAXCLASS <- NYC_Train %>% filter(SALEPRICE < 10000000) %>% ggplot(aes(x=SALEPRICE/1000000)) + theme(axis.text=element_text(size=6), axis.title=element_text(size=6), plot.title=element_text(size=10)) + geom_histogram(binwidth = 0.5, fill = "Blue", col = "Black") + xlab("Sales Price NYC (*10^6)") + ggtitle("Histogram Tax Sale") + facet_wrap(~TAXCLASSSALE, nrow=1)
+
+scat_YEARBUILT <- NYC_Train %>% filter(YEARBUILT > 1800) %>% group_by(YEARBUILT) %>% summarize(price_in_billion = mean(SALEPRICE)/1000000) %>% ggplot(aes(YEARBUILT, price_in_billion)) + geom_point() + ggtitle("Built Date") + theme(axis.text=element_text(size=6), axis.title=element_text(size=6), plot.title=element_text(size=10)) + xlab("Built Date") + ylab("Sales Price NYC (*10^6)") + geom_smooth()
+scat_Residential <- NYC_Train %>% filter(SALEPRICE < 10000000) %>% filter(RESIDENTIAL < 1000) %>% group_by(RESIDENTIAL) %>% summarize(price_in_billion = mean(SALEPRICE)/1000000) %>% ggplot(aes(RESIDENTIAL, price_in_billion)) + ggtitle("Residential Units") + theme(axis.text=element_text(size=6), axis.title=element_text(size=6), plot.title=element_text(size=10)) + xlab("Nr of Residential Units") + ylab("Sales Price NYC (*10^6)") + geom_point() + geom_smooth()
+scat_Commercial <- NYC_Train %>% filter(SALEPRICE < 10000000) %>% filter(COMMERCIAL < 1000) %>% group_by(COMMERCIAL) %>% summarize(price_in_billion = mean(SALEPRICE)/1000000) %>% ggplot(aes(COMMERCIAL, price_in_billion)) + ggtitle("Commercial Units") + theme(axis.text=element_text(size=6), axis.title=element_text(size=6), plot.title=element_text(size=10)) + xlab("Nr of Commercial Units") + ylab("Sales Price NYC (*10^6)") + geom_point() + geom_smooth()
+
+Boxplot_MonthlySale <- NYC_Train %>% filter(SALEPRICE < 100000000) %>% group_by(SALEPRICE) %>% summarize(price_in_billion = mean(SALEPRICE)/1000000, year = as.character(first(YEARMONTH))) %>% ggplot(aes(year, price_in_billion)) + geom_boxplot() + ggtitle("Boxplot Sale date") + theme(axis.text=element_text(size=6), axis.title=element_text(size=6), plot.title=element_text(size=10)) + xlab("Sale Date") + ylab("Sales Price NYC (*10^6)")
+Boxplot_Borough <- NYC_Train %>% filter(SALEPRICE < 100000000) %>% group_by(SALEPRICE) %>% summarize(price_in_billion = mean(SALEPRICE)/1000000 , Borough = as.character(first(BOROUGH))) %>% ggplot(aes(Borough, price_in_billion)) + geom_boxplot() + ggtitle("Boxplot Borough") + theme(axis.text=element_text(size=6), axis.title=element_text(size=6), plot.title=element_text(size=10)) + xlab("Borough") + ylab("Sales Price NYC (*10^6)")
+Boxplot_Zipcode <- NYC_Train %>% filter(SALEPRICE < 100000000) %>% group_by(SALEPRICE) %>% summarize(price_in_billion = mean(SALEPRICE)/1000000 , Zipcode = as.character(first(ZIPCODE))) %>% ggplot(aes(Zipcode, price_in_billion)) + geom_boxplot() + ggtitle("Boxplot Zipcode") + theme(axis.text=element_text(size=6), axis.title=element_text(size=6), plot.title=element_text(size=10)) + xlab("Zipcode") + ylab("Sales Price NYC (*10^6)")
+Boxplot_BUILDINGCLASS <- NYC_Train %>% filter(SALEPRICE < 10000000) %>% group_by(SALEPRICE) %>% summarize(price_in_billion = mean(SALEPRICE)/1000000 , Building = as.character(first(BUILDINGCLASSSALE))) %>% ggplot(aes(Building, price_in_billion)) + geom_boxplot() + ggtitle("Boxplot Building Class") + theme(axis.text=element_text(size=6), axis.title=element_text(size=6), plot.title=element_text(size=10)) + xlab("Building Class at Sale") + ylab("Sales Price NYC (*10^6)")
+
+library(gridExtra)
+grid.arrange(hist_BOROUGH, hist_TAXCLASS,scat_YEARBUILT, scat_Residential,scat_Commercial,Boxplot_MonthlySale,Boxplot_Borough, Boxplot_Zipcode, Boxplot_BUILDINGCLASS, layout_matrix = matrix(c(1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9), byrow=TRUE, ncol=6)) 
+                                    
+```
+## Modelling Approach
+ 
+- RMSE will be used to evaluate how close the predictions are to the true values in the validation set.
+ 
+```{r RMSE, echo=FALSE}
+RMSE <- function(true_salesprice, predicted_salesprice){sqrt(mean((true_salesprice - predicted_salesprice)^2))}
+```
+ 
+### Building the recommendation system
+```{r mu_hat, echo=FALSE}
+mu_price <- mean(NYC_Train$SALEPRICE)
+```
+
+1. We start by building the simplest possible recommendation system. We're going to predict the same sales price for all buildings. 
+
+    The average that we predict is: **`r format(mu_price, scientific = FALSE, big.mark = ",")` dollar**.
+
+
+```{r naive_rmse, echo=FALSE}
+naive_rmse <- RMSE(mu_price, NYC_Validation$SALEPRICE)
+```
+
+    How well does this model? 
+    
+    The deviation on average is: **`r format(naive_rmse, scientific = FALSE, big.mark = ",")` dollar**.
+
+    Now because as we go along we will be comparing different approaches, we're going to create a table that's going to store the results that we obtain as we go along.
+    
+     
+```{r table_average, echo=FALSE, big.mark="."}
+rmse_results <- data.frame(Method = "Just the average", RMSE = naive_rmse)
+rmse_results %>% knitr::kable()
+```
+
+2. In the second step, we are going to take the borough into account. 
+
+```{r borough_effect, echo=FALSE, fig.align="center", fig.height=2, fig.width=2}
+mu <- mean(NYC_Train$SALEPRICE)
+borough_avgs <- NYC_Train %>% group_by(BOROUGH) %>% summarize(b_b = mean(SALEPRICE-mu))
+borough_avgs %>% qplot(b_b, geom ="histogram", bins = 10, data = ., color = I("black"))
+```
+
+  The histogram shows the deviation of the sales price in a borough from the average sales price. You can see that these estimates vary substantially. In some boroughs the sales prices are higher.
+ 
+  *Updated RMSE table:*
+```{r table_borough_effect, echo = FALSE}
+predicted_salesprice <- mu + NYC_Validation %>% left_join(borough_avgs, by='BOROUGH') %>% .$b_b
+model_1_rmse <- RMSE(NYC_Validation$SALEPRICE, predicted_salesprice)
+rmse_results <- bind_rows(rmse_results, data.frame(Method="BOROUGH Effect Model", RMSE = model_1_rmse))
+rmse_results %>% knitr::kable()
+```
+
+3. In the third step, we are going to take the borough effect and commercial units effect into account.
+
+```{r commercial_units_effect, echo = FALSE, fig.align="center", fig.height=2, fig.width=2}
+NYC_Train %>% group_by(COMMERCIAL) %>% summarize(b_c = mean(SALEPRICE)) %>% filter(n()>=10) %>% ggplot(aes(b_c)) + geom_histogram(bins = 30, color = "black")
+```
+
+  The histogram shows the variability of sales prices of the number of commercial units. There is substantial variability across the number of commercial units.
+  
+  *Updated RMSE table:*
+  
+```{r table_commercial_units_effect, echo = FALSE}
+
+commercial_avgs <- NYC_Train %>% left_join(borough_avgs, by='BOROUGH') %>% group_by(COMMERCIAL) %>% summarize(b_c = mean(SALEPRICE - mu - b_b))
+predicted_salesprice <- NYC_Validation %>% left_join(borough_avgs, by='BOROUGH') %>% left_join(commercial_avgs, by='COMMERCIAL') %>% mutate(pred = mu + b_b + b_c) %>% .$pred
+model_2_rmse <- RMSE(NYC_Validation$SALEPRICE, predicted_salesprice)
+rmse_results <- bind_rows(rmse_results, data.frame(Method="BOROUGH & COMMERCIAL Effects Model", RMSE = model_2_rmse))
+rmse_results %>% knitr::kable()
+```
+
+4. In the fourth step, we are going to take the borough, commercial units and building class effect into account.
+
+```{r building_effect, echo = FALSE, fig.align="center", fig.height=2, fig.width=2}
+NYC_Train %>% group_by(BUILDING) %>% summarize(b_u = mean(SALEPRICE)) %>% filter(n()>=10) %>% ggplot(aes(b_u)) + geom_histogram(bins = 30, color = "black")
+```
+
+  The histogram shows the variability of sales prices of building classes. There is variability across building classes.
+
+  *Updated RMSE table:*
+
+```{r table_building_effect, echo = FALSE}
+building_avgs <- NYC_Train %>% left_join(borough_avgs, by='BOROUGH') %>% left_join(commercial_avgs, by='COMMERCIAL') %>% group_by(BUILDING) %>% summarize(b_u = mean(SALEPRICE - mu - b_b - b_c))
+predicted_salesprice <- NYC_Validation %>% left_join(borough_avgs, by='BOROUGH') %>% left_join(commercial_avgs, by='COMMERCIAL') %>% left_join(building_avgs, by='BUILDING') %>% mutate(pred = mu + b_b + b_c + b_u) %>% .$pred
+model_3_rmse <- RMSE(NYC_Validation$SALEPRICE, predicted_salesprice)
+rmse_results <- bind_rows(rmse_results, data.frame(Method="BOROUGH & COMMERCIAL & BUILDING CLASS Effects Model", RMSE = model_3_rmse ))
+rmse_results %>% knitr::kable()
+```    
+
+5. In the fifth step, we are going to take the borough, commercial units, building class and Zip code effect into account.
+
+```{r zip_code_effect, echo = FALSE, fig.align="center", fig.height=2, fig.width=2}
+NYC_Train %>% group_by(ZIPCODE) %>% summarize(b_z = mean(SALEPRICE)) %>% ggplot(aes(b_z)) + geom_histogram(bins = 3, color = "black")
+```
+
+  The histogram shows the variability of sales prices per zip code. There is variability across zip codes.
+
+  *Updated RMSE table:*
+
+```{r table_zip_code_effect, echo = FALSE}
+zipcode_avgs <- NYC_Train %>% left_join(borough_avgs, by='BOROUGH') %>% left_join(commercial_avgs, by='COMMERCIAL') %>% left_join(building_avgs, by='BUILDING') %>% group_by(ZIPCODE) %>% summarize(b_z = mean(SALEPRICE - mu - b_b - b_c -b_u))
+predicted_salesprice <- NYC_Validation %>% left_join(borough_avgs, by='BOROUGH') %>% left_join(commercial_avgs, by='COMMERCIAL') %>% left_join(building_avgs, by='BUILDING') %>% left_join(zipcode_avgs, by='ZIPCODE') %>% mutate(pred = mu + b_b + b_c + b_u + b_z) %>% .$pred
+model_4_rmse <- RMSE(NYC_Validation$SALEPRICE, predicted_salesprice)
+rmse_results <- bind_rows(rmse_results, data.frame(Method="BOROUGH & COMMERCIAL & BUILDING CLASS & ZIPCODE Effects Model", RMSE = model_4_rmse ))
+rmse_results %>% knitr::kable()
+```    
+
+
+
+
+6. in the fifth step, we are going to regularize the borough, commercial units, building class and Zip code effect.
+
+    Large errors can increase our residual mean squared error, so we would rather be conservative when we're not sure. Regularization permits us to penalize large estimates that come from small sample sizes.
+  
+    First we have to pick the optimal tuning parameter lambda. 
+  
+```{r lambda, echo = FALSE, fig.align="center", fig.height=3, fig.width=3}
+lambdas <- seq(0, 50000, 250)
+
+rmses <- sapply(lambdas, function(l){
+  
+mu <- mean(NYC_Train$SALEPRICE)
+b_b <- NYC_Train %>% group_by(BOROUGH) %>% summarize(b_b = sum(SALEPRICE-mu)/(n()+l))
+b_u <- NYC_Train %>% left_join(b_b, by="BOROUGH") %>% group_by(BUILDING) %>% summarize(b_u = sum(SALEPRICE - b_b - mu)/(n()+l))
+b_z <- NYC_Train %>% left_join(b_b, by="BOROUGH") %>% left_join(b_u, by="BUILDING") %>% group_by(ZIPCODE) %>% summarize(b_z = sum(SALEPRICE - b_u - b_b - mu)/(n()+l))
+b_c <- NYC_Train %>% left_join(b_b, by="BOROUGH") %>% left_join(b_u, by="BUILDING") %>% left_join(b_z, by="ZIPCODE") %>% group_by(COMMERCIAL) %>% summarize(b_c = sum(SALEPRICE - b_z - b_u - b_b - mu)/(n()+l))
+  
+predicted_sales_price <- NYC_Validation %>% left_join(b_b, by="BOROUGH") %>% left_join(b_u, by = "BUILDING") %>% left_join(b_z, by="ZIPCODE") %>% left_join(b_c, by="COMMERCIAL") %>% mutate(pred = mu + b_b + b_u + b_z + b_c) %>% pull(pred)
+  
+return(RMSE(predicted_sales_price, NYC_Validation$SALEPRICE))})
+
+qplot(lambdas, rmses)
+```
+  
+
+  
+```{r optimal_lambda, echo=FALSE}
+lambda <- lambdas[which.min(rmses)]
+```
+    The optimal lambda is:  `r lambda`
+  
+  *Updated RMSE table:*
+    
+```{r regularized, echo=FALSE}
+model_5_rmse <- min(rmses)
+rmse_results <- bind_rows(rmse_results, data.frame(Method="Regularized BOROUGH & COMMERCIAL & BUILDING CLASS & ZIPCODE Effects Model", RMSE = min(rmses)))
+rmse_results %>% knitr::kable()
+```
+
+# 3) Results Section
+
+RMSE overview
+
+The RMSE values for the used models are shown below:
+
+```{r conclusion, echo = FALSE}
+rmse_results %>% knitr::kable()
+```
+
+The RMSE table shows an improvement of the model over the different assumptions. The simplest model ‘Just the average’ calculates a RMSE of `r format(naive_rmse, scientific = FALSE, big.mark = ",")`, which means, on average, we miss the sales price by `r format(naive_rmse, scientific = FALSE, big.mark = ",")` dollar. Incorporating ‘Borough’, ‘Commercial Units', 'Building Class' and 'Zipcode' effects in our model gives an improvement of `r round((1-(model_1_rmse/naive_rmse))*100, digits=2)`%, `r round((1-(model_2_rmse/naive_rmse))*100, digits=2)`%, `r round((1-(model_3_rmse/naive_rmse))*100, digits=2)`% and `r round((1-(model_4_rmse/naive_rmse))*100, digits=2)`% respectively. 
+    
+A deeper insight into the data revealed some data points have large effect on errors. So a regularization model was used to penalize these kind of data points. The final RMSE is `r format(model_5_rmse, scientific = FALSE)` with an improvement of , `r round((1-(model_5_rmse/naive_rmse))*100, digits=2)`% with respect to the baseline model. 
+    
+Other sources of variation can be added to the model to further improve the predictability of the model.  
+    
+# 4) Conclusion Section
+
+For this project, we created a sales prediction system using the New York City Sales dataset. 
+
+The goal of this project is to train a machine learning algorithm using the inputs in the New York City Sales dataset. The predictions from this machine learning algorithm were compared to the true sales prices in the validation set using RMSE. 
+
+We started with a simple model, using the 'mean sales price' only, and added ‘Borough’, ‘Commercial Units', 'Building Class' and 'Zipcode' effects. Our final model included regularization, that improved the final RMSE to **`r format(model_5_rmse, scientific = FALSE, big.mark = ",")`**. This was an improvement of **`r round((1-(model_5_rmse/naive_rmse))*100, digits=2)`%** with respect to the baseline model.
+
+Other sources of variation can be added to the model to further improve the predictability of the model.
